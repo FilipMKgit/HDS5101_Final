@@ -9,7 +9,28 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
 
-git init
+library(mice)
+library(Hmisc)
+library(VIM)
+```
 
-git remote add origin https://github.com/FilipMKgit/HDS5101_FInal
+
+```{r}
+marathon_data <- read_csv("marathondata.csv")
+dim(marathon_data)
+aggr(marathon_data)
+
+missing_prop_long <- marathon_data %>%
+  summarise(across(everything(), ~ mean(is.na(.)))) %>%
+  pivot_longer(cols = everything(),
+               names_to = "variable",
+               values_to = "prop_missing") %>%
+  filter(prop_missing > 0) %>%
+  arrange(desc(prop_missing))
+
+missing_prop_long
+```
+
