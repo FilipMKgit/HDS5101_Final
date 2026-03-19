@@ -10,3 +10,6 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
+git init
+
+git remote add origin https://github.com/FilipMKgit/HDS5101_FInal
