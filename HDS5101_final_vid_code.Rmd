@@ -15,15 +15,83 @@ library(tidyverse)
 library(mice)
 library(Hmisc)
 library(VIM)
+
+set.seed(21490084)
+```
+
+# Question
+
+To what extent do health-related variables influence marathon finish time, and how well can these variables be used to predict performance?
+
+# Full Data Set Exploration
+
+```{r}
+marathon_data_full <- read_csv("marathondata.csv")
+head(marathon_data_full, 10)
+dim(marathon_data_full)
+aggr(marathon_data_full)
+
+missing_prop_long <- marathon_data_full %>%
+  summarise(across(everything(), ~ mean(is.na(.)))) %>%
+  pivot_longer(cols = everything(),
+               names_to = "variable",
+               values_to = "prop_missing") %>%
+  filter(prop_missing > 0) %>%
+  
+  arrange(desc(prop_missing))
+
+missing_prop_long
+```
+
+n = 80,000
+
+p = 41
+
+Study type = Observational cohort study
+
+Population = Marathon runners from a fictional running club
+
+injury_severity is structurally missing when injury_count = 0 so I will remove it. runner_id and marathon_date seem redundant. Weekly_mileage_miles is a duplicate variable of weekly_mileage_km. gender, training_program, marathon_weather, course_difficulty need to be converted into factors.
+
+I will sub sample the data into 2,000 observations for computational efficiency and to make the data set more realistic. I will also split it into a training and testing sets.
+
+# Sample Data
+
+```{r}
+#sample 2,000 observations
+
+marathon_data_sampled <- marathon_data_full %>%
+  slice_sample(n = 2000)
+
+```
+
+# Data wraggling
+
+```{r}
+
+marathon_data_sampled <- marathon_data_sampled %>%
+  select(
+    -runner_id,
+    -injury_severity,
+    -weekly_mileage_miles,
+    -marathon_date #redundant
+  ) %>%
+  mutate(
+    gender = factor(gender),
+    training_program = factor(training_program),
+    marathon_weather = factor(marathon_weather),
+    course_difficulty = factor(course_difficulty) #convert to factor
+  )
 ```
 
 
-```{r}
-marathon_data <- read_csv("marathondata.csv")
-dim(marathon_data)
-aggr(marathon_data)
 
-missing_prop_long <- marathon_data %>%
+```{r}
+head(marathon_data_sampled, 10)
+dim(marathon_data_sampled)
+aggr(marathon_data_sampled)
+
+missing_prop_long2 <- marathon_data_sampled %>%
   summarise(across(everything(), ~ mean(is.na(.)))) %>%
   pivot_longer(cols = everything(),
                names_to = "variable",
@@ -31,6 +99,80 @@ missing_prop_long <- marathon_data %>%
   filter(prop_missing > 0) %>%
   arrange(desc(prop_missing))
 
-missing_prop_long
+missing_prop_long2
+
+
 ```
+
+n = 2,000
+
+p = 37
+
+The observations with missing outcome variables will be dropped, then I will compare complete case analysis (CC) to median imputation to multiple imputation for missing predictors (MICE). To evaluate which is the best I will run a simple LM first.
+
+```{r}
+marathon_data_sampled <- marathon_data_sampled %>%
+  drop_na(actual_finish_time_minutes)
+```
+
+
+# Split Data
+
+```{r}
+set.seed(21490084)
+
+train_index <- sample(
+  seq_len(nrow(marathon_data_sampled)),
+  size = 0.7 * nrow(marathon_data_sampled)
+)
+
+train_data <- marathon_data_sampled[train_index, ]
+test_data  <- marathon_data_sampled[-train_index, ]
+
+dim(train_data)
+dim(test_data)
+
+```
+
+# Missing Data
+
+**Complete Case**
+
+```{r}
+train_cc <- train_data %>%
+  drop_na()
+
+test_cc <- test_data %>%
+  drop_na()
+```
+
+**Median Imputation**
+
+```{r}
+
+median_impute <- function(x) {
+  if (is.numeric(x)) {
+    x[is.na(x)] <- median(x, na.rm = TRUE)
+  }
+  x
+}
+
+
+train_median <- train_data %>%
+  mutate(across(-actual_finish_time_minutes, median_impute))
+
+test_median <- test_data %>%
+  mutate(across(-actual_finish_time_minutes, median_impute))
+```
+
+
+The observations with missing outcome variables will be dropped, then I will compare complete case analysis to median imputation to multiple imputation for missing predictors (MICE). To evaluate which is the best I will run a simple LM first.
+
+**MICE**
+
+
+
+
+
+
 
