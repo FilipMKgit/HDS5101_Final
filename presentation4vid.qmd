@@ -1,0 +1,39 @@
+---
+title: "Marathon Data"
+format:
+  revealjs:
+    theme: [default]
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(mice)
+library(broom)
+
+source("code/prep.R")
+source("code/missingdat.R")
+```
+
+
+## Research Question
+
+How strongly does VO2 max predict marathon finish time, and does this relationship persist after accounting for other health-related factors?
+
+![](images/forrest.jpg){width="66%"}
+
+## Data Set
+
+-   Source
+
+-   Synthetic designed for ML
+
+-   80,000 Observations
+
+-   40 Predictors
+
+## Missing Data
+
+```{r}
+missing_prop_long
+```
