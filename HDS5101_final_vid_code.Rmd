@@ -2,7 +2,9 @@
 title: "HDS5101_final_vid"
 author: "Klosowski Filip"
 date: "2026-03-19"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -15,164 +17,380 @@ library(tidyverse)
 library(mice)
 library(Hmisc)
 library(VIM)
+library(knitr)
 
 set.seed(21490084)
 ```
+
 
 # Question
 
 To what extent do health-related variables influence marathon finish time, and how well can these variables be used to predict performance?
 
+From the dataset I will use age, gender, resting_heart_rate_bpm, vo2_max, bmi, sleep_hours_avg, injury_count, nutrition_score, and hydration_consistency to predict actual_finish_time_minutes.
+
+- Subset the full dataset to health-related variables
+
+- Draw a random sample of 2,000 observations and treat the full dataset as a population proxy
+
+- Explore and handle missing data using MICE
+
+- Fit a series of predictive models:
+    - simple linear regression using VO2 max only
+    - adjusted linear regression
+    - quadratic model for VO2 max
+    - fuller multivariable model
+    - interaction model with VO2 max and gender
+
+- Compare models using RMSE, MAE and R-squared
+
 # Full Data Set Exploration
 
 ```{r}
-marathon_data_full <- read_csv("marathondata.csv")
-head(marathon_data_full, 10)
-dim(marathon_data_full)
-aggr(marathon_data_full)
 
-missing_prop_long <- marathon_data_full %>%
+marathon_data_full <- read_csv("marathondata.csv")
+
+marathon_data <- marathon_data_full %>%
+  select(
+    age,
+    gender,
+    resting_heart_rate_bpm,
+    vo2_max,
+    bmi,
+    sleep_hours_avg,
+    injury_count,
+    nutrition_score,
+    hydration_consistency,
+    actual_finish_time_minutes
+  ) %>%
+  mutate(
+    gender = as.factor(gender)
+  )
+
+names(marathon_data)
+head(marathon_data, 10)
+dim(marathon_data)
+
+```
+
+# Sample Data
+
+```{r}
+
+set.seed(21490084)
+
+sample_index <- sample(seq_len(nrow(marathon_data)), size = 2000)
+
+marathon_data_sampled <- marathon_data[sample_index, ]
+```
+
+# Missing Data
+
+```{r}
+missing_prop_long <- marathon_data_sampled %>%
   summarise(across(everything(), ~ mean(is.na(.)))) %>%
-  pivot_longer(cols = everything(),
-               names_to = "variable",
-               values_to = "prop_missing") %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "prop_missing"
+  ) %>%
   filter(prop_missing > 0) %>%
-  
   arrange(desc(prop_missing))
 
 missing_prop_long
 ```
 
-n = 80,000
+There are quite a few missing values found in the data set with VO2 max having the highest proportion of missingness. Although the proportions are not extreme they are non-negligible and could bias the reults if ignored, so multiple imputation using MICE will be used to generate plausible values based on observed data patterns.
 
-p = 41
-
-Study type = Observational cohort study
-
-Population = Marathon runners from a fictional running club
-
-injury_severity is structurally missing when injury_count = 0 so I will remove it. runner_id and marathon_date seem redundant. Weekly_mileage_miles is a duplicate variable of weekly_mileage_km. gender, training_program, marathon_weather, course_difficulty need to be converted into factors.
-
-I will sub sample the data into 2,000 observations for computational efficiency and to make the data set more realistic. I will also split it into a training and testing sets.
-
-# Sample Data
-
+**MICE**
 ```{r}
-#sample 2,000 observations
+imputed_data <- mice(
+  data = marathon_data_sampled,
+  m = 5,
+  method = "pmm",
+  seed = 21490084,
+  print = FALSE
+)
 
-marathon_data_sampled <- marathon_data_full %>%
-  slice_sample(n = 2000)
-
+marathon_data_complete <- complete(imputed_data, 1)
 ```
 
-# Data wraggling
+5 imputeted datasets were generated, one completed data set will be used for model fitting and visulaization purposes while the others will be used for inference.
 
 ```{r}
-
-marathon_data_sampled <- marathon_data_sampled %>%
-  select(
-    -runner_id,
-    -injury_severity,
-    -weekly_mileage_miles,
-    -marathon_date #redundant
-  ) %>%
-  mutate(
-    gender = factor(gender),
-    training_program = factor(training_program),
-    marathon_weather = factor(marathon_weather),
-    course_difficulty = factor(course_difficulty) #convert to factor
+marathon_data_population <- marathon_data %>%
+  drop_na(
+    actual_finish_time_minutes,
+    vo2_max,
+    age,
+    gender,
+    bmi,
+    resting_heart_rate_bpm,
+    sleep_hours_avg,
+    nutrition_score,
+    hydration_consistency
   )
 ```
 
 
+**Model 1: VO2 max only LM**
 
 ```{r}
-head(marathon_data_sampled, 10)
-dim(marathon_data_sampled)
-aggr(marathon_data_sampled)
-
-missing_prop_long2 <- marathon_data_sampled %>%
-  summarise(across(everything(), ~ mean(is.na(.)))) %>%
-  pivot_longer(cols = everything(),
-               names_to = "variable",
-               values_to = "prop_missing") %>%
-  filter(prop_missing > 0) %>%
-  arrange(desc(prop_missing))
-
-missing_prop_long2
-
-
-```
-
-n = 2,000
-
-p = 37
-
-The observations with missing outcome variables will be dropped, then I will compare complete case analysis (CC) to median imputation to multiple imputation for missing predictors (MICE). To evaluate which is the best I will run a simple LM first.
-
-```{r}
-marathon_data_sampled <- marathon_data_sampled %>%
-  drop_na(actual_finish_time_minutes)
-```
-
-
-# Split Data
-
-```{r}
-set.seed(21490084)
-
-train_index <- sample(
-  seq_len(nrow(marathon_data_sampled)),
-  size = 0.7 * nrow(marathon_data_sampled)
+model_1 <- lm(
+  actual_finish_time_minutes ~ vo2_max,
+  data = marathon_data_complete
 )
 
-train_data <- marathon_data_sampled[train_index, ]
-test_data  <- marathon_data_sampled[-train_index, ]
+model_1_population <- lm(
+  actual_finish_time_minutes ~ vo2_max,
+  data = marathon_data_population
+)
 
-dim(train_data)
-dim(test_data)
+ggplot(marathon_data_complete, aes(x = vo2_max, y = actual_finish_time_minutes)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", colour = "blue") +
+  geom_smooth(
+    data = marathon_data_population,
+    aes(x = vo2_max, y = actual_finish_time_minutes),
+    method = "lm",
+    colour = "red"
+  ) +
+  labs(
+    title = "VO2 Max vs Finish Time",
+    x = "VO2 max",
+    y = "Finish time (minutes)"
+  )
+
+summary(model_1)
 
 ```
 
-# Missing Data
+This simple LM shows statistically significant negative relations ship between VO2 max and marathon finish times with p < 0.0001 specifically higher VO2 max values are associated with faster finish times, the model explains only a small proportions of variability with adjusted R square of only 0.04, inidicating that VO2 max aline is not sufficient to accurately predict marathon outcomes.
 
-**Complete Case**
+The plot shows a clear downward trend with higher VO2 max values corresponding to lower finish times, the similairt between the sample blue line and population red line suggests that the sample provided a very good representation of the overall relationshup.
+
+**Model 2: adjusted linear model**
 
 ```{r}
-train_cc <- train_data %>%
-  drop_na()
+model_2 <- lm(
+  actual_finish_time_minutes ~ vo2_max + age + bmi + resting_heart_rate_bpm +
+    sleep_hours_avg + nutrition_score,
+  data = marathon_data_complete
+)
 
-test_cc <- test_data %>%
-  drop_na()
+plot_data_2 <- marathon_data_complete %>%
+  mutate(predicted = predict(model_2))
+
+ggplot(plot_data_2, aes(x = predicted, y = actual_finish_time_minutes)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, colour = "red") +
+  labs(
+    title = "Observed vs Predicted Finish Time",
+    x = "Predicted",
+    y = "Observed"
+  )
+
+summary(model_2)
 ```
 
-**Median Imputation**
+The adjusted model adjusts for additional health related variables, VO2 max remains a significant predictors of finish times, but most additional varaibles such as age, BMI and nutrition score are not statistically significant. Resting heart rate and sleep show weak evidence of association. THe overall explanatoruy power of the model increases only slightly with R squared of 0.046 meaning that these additonal variables provide a limited improvement in predictinve performance.
+
+The plot shows a moderate allginment between predicted and actual values although there is substatial spread around the diagonal line. This indicated that while the model captures some structure in the data, prediction accuracy remains limited.
+
+**Model 3: Quadratic Model** 
 
 ```{r}
+model_3 <- lm(
+  actual_finish_time_minutes ~ poly(vo2_max, 2),
+  data = marathon_data_complete
+)
 
-median_impute <- function(x) {
-  if (is.numeric(x)) {
-    x[is.na(x)] <- median(x, na.rm = TRUE)
-  }
-  x
+model_3_population <- lm(
+  actual_finish_time_minutes ~ poly(vo2_max, 2),
+  data = marathon_data_population
+)
+
+ggplot(marathon_data_complete, aes(x = vo2_max, y = actual_finish_time_minutes)) +
+  geom_point(alpha = 0.5) +
+  stat_smooth(method = "lm", formula = y ~ poly(x, 2), colour = "blue") +
+  stat_smooth(
+    data = marathon_data_population,
+    aes(x = vo2_max, y = actual_finish_time_minutes),
+    method = "lm",
+    formula = y ~ poly(x, 2),
+    colour = "red"
+  ) +
+  labs(
+    title = "Quadratic Relationship: VO2 Max vs Finish Time",
+    x = "VO2 max",
+    y = "Finish time (minutes)"
+  )
+
+summary(model_3)
+```
+
+The quadtratic model for potential non-linear effect of VO2 remians highly significant but with the quadtratic term only marginally significant with p =~ 0.065. Suggesting weak evidence of non-linearlity. The model explains slightly more variation than the simple leaner model but the imporvemnt is minimal, indicating tha tthe linear relationship is likely sufficident.
+
+The quadratic fit shows only a slight curvature compared to the linear model, reinforcing the conclusion that the relationship between VO2 max and finish time is approximately linear.
+
+**Model 4: fuller linear model including gender and hydration**
+
+```{r}
+model_4 <- lm(
+  actual_finish_time_minutes ~ vo2_max + age + gender + bmi +
+    resting_heart_rate_bpm + sleep_hours_avg + nutrition_score +
+    hydration_consistency,
+  data = marathon_data_complete
+)
+
+plot_data_4 <- marathon_data_complete %>%
+  mutate(predicted = predict(model_4))
+
+ggplot(plot_data_4, aes(x = predicted, y = actual_finish_time_minutes)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, colour = "red") +
+  labs(
+    title = "Model 4: Observed vs Predicted",
+    x = "Predicted",
+    y = "Observed"
+  )
+
+plot_data_4 <- plot_data_4 %>%
+  mutate(residuals = actual_finish_time_minutes - predicted)
+
+ggplot(plot_data_4, aes(x = predicted, y = residuals)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  labs(
+    title = "Model 4: Residuals vs Fitted",
+    x = "Fitted values",
+    y = "Residuals"
+  )
+
+summary(model_4)
+```
+
+In the full model, VO2 max remains the only consistently significant predictor of finish time. Other variables, including gender, BMI, nutrition score, and hydration consistency, do not show statistically significant effects. Resting heart rate and sleep again show weak trends but do not reach conventional significance levels. The overall model fit improves only marginally (R² ≈ 0.046), suggesting that most of the variation in finish time is not explained by the included health variables.
+
+The model shows moderate predictive ability, but predictions remain widely dispersed, indicating substantial unexplained variability.
+
+The residual plot does not show strong patterns, suggesting that model assumptions such as linearity and homoscedasticity are reasonably satisfied.
+
+**Model 5: interaction model where the effect of vo2_max can differ by gender**
+
+```{r}
+model_5 <- lm(
+  actual_finish_time_minutes ~ vo2_max * gender + age + bmi +
+    resting_heart_rate_bpm + sleep_hours_avg + nutrition_score,
+  data = marathon_data_complete
+)
+
+summary(model_5)
+
+```
+
+The interaction model tests whether the effect of VO2
+
+```{r}
+pooled_model_1 <- pool(
+  with(imputed_data, lm(actual_finish_time_minutes ~ vo2_max))
+)
+
+pooled_model_2 <- pool(
+  with(imputed_data, lm(actual_finish_time_minutes ~ vo2_max + age + bmi +
+    resting_heart_rate_bpm + sleep_hours_avg + nutrition_score))
+)
+
+pooled_model_3 <- pool(
+  with(imputed_data, lm(actual_finish_time_minutes ~ poly(vo2_max, 2)))
+)
+
+pooled_model_4 <- pool(
+  with(imputed_data, lm(actual_finish_time_minutes ~ vo2_max + age + gender +
+    bmi + resting_heart_rate_bpm + sleep_hours_avg + nutrition_score +
+    hydration_consistency))
+)
+
+pooled_model_5 <- pool(
+  with(imputed_data, lm(actual_finish_time_minutes ~ vo2_max * gender + age +
+    bmi + resting_heart_rate_bpm + sleep_hours_avg + nutrition_score))
+)
+
+summary(pooled_model_1)
+summary(pooled_model_2)
+summary(pooled_model_3)
+summary(pooled_model_4)
+summary(pooled_model_5)
+
+```
+
+Pooled models results from multipple imputations confirm that the finidings from single completed dataset. VO2 max consistently shows a significant negative association with finish time across all models, while other predictors remain non significant, this shows that the conclsions are robust to the uncertaintly indtroduced by missing data
+
+```{r}
+get_metrics <- function(model, data, model_name) {
+  predicted <- predict(model, newdata = data)
+  rmse <- sqrt(mean((data$actual_finish_time_minutes - predicted)^2))
+  mae <- mean(abs(data$actual_finish_time_minutes - predicted))
+  r_squared <- cor(data$actual_finish_time_minutes, predicted)^2
+  
+  data.frame(
+    Model = model_name,
+    R_squared = r_squared,
+    RMSE = rmse,
+    MAE = mae
+  )
 }
-
-
-train_median <- train_data %>%
-  mutate(across(-actual_finish_time_minutes, median_impute))
-
-test_median <- test_data %>%
-  mutate(across(-actual_finish_time_minutes, median_impute))
 ```
 
+```{r}
+sample_results <- bind_rows(
+  get_metrics(model_1, marathon_data_complete, "Model 1: VO2 max only"),
+  get_metrics(model_2, marathon_data_complete, "Model 2: Adjusted linear"),
+  get_metrics(model_3, marathon_data_complete, "Model 3: Quadratic VO2 max"),
+  get_metrics(model_4, marathon_data_complete, "Model 4: Full linear"),
+  get_metrics(model_5, marathon_data_complete, "Model 5: VO2 max by gender")
+)
 
-The observations with missing outcome variables will be dropped, then I will compare complete case analysis to median imputation to multiple imputation for missing predictors (MICE). To evaluate which is the best I will run a simple LM first.
+sample_results
+kable(sample_results, digits = 3)
 
-**MICE**
+population_results <- bind_rows(
+  get_metrics(model_1, marathon_data_population, "Model 1: VO2 max only"),
+  get_metrics(model_2, marathon_data_population, "Model 2: Adjusted linear"),
+  get_metrics(model_3, marathon_data_population, "Model 3: Quadratic VO2 max"),
+  get_metrics(model_4, marathon_data_population, "Model 4: Full linear"),
+  get_metrics(model_5, marathon_data_population, "Model 5: VO2 max by gender")
+)
+
+population_results
+kable(population_results, digits = 3)
+```
+
+Across all models, predictive performance is relatively similar. The adjusted and full models show only slight improvements in R² and small reductions in RMSE and MAE compared to the simple VO2 max model. This suggests that adding additional variables does not substantially improve predictive accuracy.
+
+When evaluated on the full dataset, model performance improves slightly, indicating that the sample models generalise reasonably well. However, differences between models remain small, reinforcing the conclusion that VO2 max is the dominant predictor and that additional variables contribute little to predictive performance.
 
 
+# plots
 
+```{r}
 
+ggplot(marathon_data_complete, aes(x = vo2_max, y = actual_finish_time_minutes)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", colour = "blue") +
+  geom_smooth(
+    data = marathon_data_population,
+    aes(x = vo2_max, y = actual_finish_time_minutes),
+    method = "lm",
+    colour = "red"
+  ) +
+  labs(
+    title = "VO2 Max vs Finish Time (Sample vs Population)",
+    x = "VO2 max",
+    y = "Finish time (minutes)"
+  )
+```
 
+Close allginemnt between sample and population regression lines further supports that the sampled data provdes a good approx. of the true relationship in the population.
 
 
